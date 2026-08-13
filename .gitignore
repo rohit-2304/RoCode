@@ -2,3 +2,5 @@ crud-server/
 .env
 .venv/
 __pycache__/
+mini-project/
+prompts.txt

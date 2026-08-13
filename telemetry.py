@@ -63,14 +63,28 @@ class BaseMetrics:
         if usage is None:
             return
 
+        # Token counts: OpenAI/Groq use *_tokens; Gemini uses *_token_count
+        self.prompt_tokens += (
+            getattr(usage, "prompt_tokens", None)
+            or getattr(usage, "prompt_token_count", 0)
+            or 0
+        )
+        self.completion_tokens += (
+            getattr(usage, "completion_tokens", None)
+            or getattr(usage, "candidates_token_count", 0)
+            or 0
+        )
+        self.total_tokens += (
+            getattr(usage, "total_tokens", None)
+            or getattr(usage, "total_token_count", 0)
+            or 0
+        )
+
+        # Reasoning tokens (OpenAI o-series only)
         completion_details = getattr(usage, "completion_tokens_details", None)
-        reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0) or 0
+        self.reasoning_tokens += getattr(completion_details, "reasoning_tokens", 0) or 0
 
-        self.prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
-        self.completion_tokens += getattr(usage, "completion_tokens", 0) or 0
-        self.reasoning_tokens += reasoning_tokens
-        self.total_tokens += getattr(usage, "total_tokens", 0) or 0
-
+        # Timing fields (OpenAI/Groq only — Gemini usage_metadata has none)
         self.queue_time += getattr(usage, "queue_time", 0.0) or 0.0
         self.prompt_time += getattr(usage, "prompt_time", 0.0) or 0.0
         self.completion_time += getattr(usage, "completion_time", 0.0) or 0.0
@@ -426,12 +440,7 @@ def _format_metrics(title: str, summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _format_average_line(
-    label: str,
-    value: float,
-    suffix: str = "",
-    unit: str | None = None,
-) -> str:
+def _format_average_line( label: str, value: float, suffix: str = "", unit: str | None = None, ) -> str:
     metric_label = f"Avg {label}{suffix}"
     formatted_value = f"{value:.3f}" if unit else f"{value:.2f}"
     if unit:
