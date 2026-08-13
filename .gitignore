@@ -1,0 +1,4 @@
+crud-server/
+.env
+.venv/
+__pycache__/
