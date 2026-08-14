@@ -132,12 +132,25 @@ pip install -r requirements.txt
 
 ### 2. Configure Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root and add your API keys. You only need to set the keys for the providers you intend to use.
 
 ```bash
 # Set your preferred API keys
 GEMINI_API_KEY=your_gemini_api_key_here
 GROQ_API_KEY=your_groq_api_key_here
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+**Where to get API keys:**
+- **Google Gemini**: [Google AI Studio](https://aistudio.google.com/app/apikey)
+- **Groq**: [Groq Console](https://console.groq.com/keys)
+- **OpenRouter**: [OpenRouter](https://openrouter.ai/keys)
+- **OpenAI**: [OpenAI Platform](https://platform.openai.com/api-keys)
+
+Alternatively, you can export these as environment variables directly in your terminal before running:
+```bash
+export GEMINI_API_KEY="your_gemini_api_key_here"
 ```
 
 ### 3. Run RoCode

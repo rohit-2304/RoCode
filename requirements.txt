@@ -1,0 +1,5 @@
+python-dotenv
+pyfiglet
+rich
+google-genai
+openai
