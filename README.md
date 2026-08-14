@@ -18,7 +18,7 @@
   Recommended Screenshot: "Demo GIF"
   Capture a looping GIF showing RoCode exploring a repository, executing search tools, and streaming the output.
 -->
-![RoCode Terminal Demo](docs/assets/rocode_demo.gif)
+![RoCode Terminal Demo](docs/assets/explore.gif)
 *Watch RoCode explore a repository, execute search-first tools, and stream structured architecture reports in real time.*
 
 <!-- 
