@@ -247,6 +247,8 @@ class SessionMetrics(BaseMetrics):
     """Cumulative metrics from completed tasks only."""
 
     completed_tasks: int = 0
+    task_history: list[dict[str, Any]] = field(default_factory=list)
+    events_log: list[str] = field(default_factory=list)
 
     @property
     def turns(self) -> int:
@@ -261,9 +263,25 @@ class SessionMetrics(BaseMetrics):
     def update_error(self, kind: str = "error") -> None:
         self._reject_direct_update()
 
-    def merge(self, task: TaskMetrics) -> None:
+    def merge(self, task: TaskMetrics, prompt: str = "") -> None:
         self.completed_tasks += 1
         self.merge_from(task)
+        short_prompt = prompt.strip().replace("\n", " ")
+        if len(short_prompt) > 45:
+            short_prompt = short_prompt[:42] + "..."
+        self.task_history.append({
+            "turn": self.completed_tasks,
+            "prompt": short_prompt or "Task",
+            "tool_calls": task.tool_calls,
+            "prompt_tokens": task.prompt_tokens,
+            "completion_tokens": task.completion_tokens,
+            "total_tokens": task.total_tokens,
+            "task_time": task.task_time,
+            "tool_usage": dict(task.tool_usage),
+        })
+
+    def add_event(self, event_msg: str) -> None:
+        self.events_log.append(event_msg)
 
     @staticmethod
     def _reject_direct_update() -> None:

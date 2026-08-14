@@ -211,9 +211,19 @@ def detect_stack(root: Path) -> str:
         "Dockerfile": "Containerized",
         "docker-compose.yml": "Docker Compose",
     }
+    from pathlib import Path
+
     for filename, label in checks.items():
+        # Check root
         if (root / filename).exists():
             signals.append(f"{label} ({filename})")
+            continue
+
+        # Check one level deep
+        for child in root.iterdir():
+            if child.is_dir() and (child / filename).exists():
+                signals.append(f"{label} ({child.name}/{filename})")
+                break
     return "; ".join(signals) if signals else "No standard manifest files detected"
 
 

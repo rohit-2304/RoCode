@@ -23,10 +23,14 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def call( self, history: list[dict], tools_schema: list, provider_state: dict, ) -> tuple[dict, Any]:
-        """Call the LLM.
+        """Call the LLM. Returns (normalised_assistant_message, usage_object)."""
 
-        Returns:
-            (normalised_assistant_message, usage_object)
+    @abstractmethod
+    def call_structured( self, history: list[dict], schema: dict, prompt: str, provider_state: dict | None = None, ) -> dict:
+        """One-shot structured JSON extraction using history as context.
+
+        Appends *prompt* as a final user turn, requests a JSON response
+        conforming to *schema*, and returns the parsed dict.
         """
 
 
@@ -83,6 +87,20 @@ class OpenAICompatProvider(LLMProvider):
             ]
         return assistant_message
 
+    def call_structured( self, history: list[dict], schema: dict, prompt: str, provider_state: dict | None = None, ) -> dict:  # provider_state unused — OpenAI history is already serialisable
+        messages = history + [{"role": "user", "content": prompt}]
+        schema_name = schema.get("title", "structured_output")
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "schema": schema},
+            },
+            temperature=0,
+        )
+        return json.loads(response.choices[0].message.content)
+
 
 # ---------------------------------------------------------------------------
 # Gemini native provider
@@ -128,6 +146,21 @@ class GeminiProvider(LLMProvider):
         assistant_message = self._parse_response(response, provider_state)
         usage = getattr(response, "usage_metadata", None)
         return assistant_message, usage
+
+    def call_structured( self, history: list[dict], schema: dict, prompt: str, provider_state: dict | None = None, ) -> dict:
+        system_instruction, contents = self._format_history(history, provider_state or {})
+        # Append extraction prompt as a final user turn (no tool calls expected)
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=contents,
+            config={
+                "system_instruction": system_instruction,
+                "response_mime_type": "application/json",
+                "response_schema": schema,
+            },
+        )
+        return json.loads(response.text)
 
     # ------------------------------------------------------------------
     # History formatting

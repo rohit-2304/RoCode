@@ -8,12 +8,22 @@ import time
 
 from llm import get_provider, LLMProvider
 from tools import TOOLS, Tools, resolve_workspace_path
-from context_mgm import compact_context, prune_old_tool_outputs, build_initial_context
+from context_mgm import compact_context, prune_old_tool_outputs, build_initial_context, detect_stack
 from telemetry import SessionMetrics, TaskMetrics
+from prompts import SYSTEM_PROMPT, EXPLORE_PROMPT, EXTRACTION_PROMPT, ARCHITECTURE_SCHEMA
+from report import generate_architecture_report
+from ui import RoCodeUI
 
 load_dotenv()
 CLIENT = "gemini"
 _provider: LLMProvider | None = None
+_ui: RoCodeUI | None = None
+
+def get_ui() -> RoCodeUI:
+    global _ui
+    if _ui is None:
+        _ui = RoCodeUI()
+    return _ui
 
 #llama-3.3-70b-versatile
 #qwen/qwen3.6-27b
@@ -25,67 +35,6 @@ MODEL = "gemini-3.1-flash-lite"
 MAX_TURNS = 20
 TOKEN_LIMIT = 4000
 VALID_TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
-
-
-SYSTEM_PROMPT = """You are RoCode, an AI engineer specializing in understanding unfamiliar 
-codebases. Your job is to build an accurate mental model of a repository — 
-its structure, stack, architecture, and request flow — before answering 
-questions or making suggestions.
-
-EXPLORATION
-Explore before concluding: gather evidence from multiple files before 
-explaining anything. Never read files at random — inspect structure, find 
-entry points and config files, then search_files() for relevant symbols. 
-Only read_file a whole file if it's small; otherwise use read_file_part() 
-on the section you need. Before every tool call, know why you're calling 
-it (e.g. "I need to locate auth code" → search_files("auth"), not "I'll 
-read every file"). Never hallucinate — if something isn't verifiable from 
-the repo, say so explicitly.
-
-BUILDING THE MENTAL MODEL
-As you explore, continuously infer and track:
-- Stack: check package.json/pyproject.toml/requirements.txt/go.mod/Dockerfile 
-  etc. to identify language, framework (FastAPI, Django, React, Express...), 
-  and major dependencies.
-- Entry points: where execution starts (main(), app factory, server bootstrap).
-- Structure: major modules/directories and what each owns.
-- Dependencies: which modules import/call which — build this incrementally 
-  as a mental graph, don't assume it from folder names alone.
-- Request flow: for backend/API repos, trace an example request from entry 
-  point → routing → handler → business logic → persistence, citing the 
-  actual files and functions involved at each step.
-
-FILE SUGGESTIONS
-Before opening a file, briefly state why it's likely relevant. When 
-answering a question, list the 2-4 most relevant files as a suggestion 
-before diving in, so the reasoning is visible.
-
-ANSWERING QUESTIONS
-Locate relevant files first (search before reading), then answer with 
-evidence, citing file paths and line numbers. For "how do I add X" 
-questions, find an existing analogous pattern in the repo and describe it 
-rather than inventing a new one.
-
-TOOLS
-Use ONLY the tools provided, with exact registered names. All arguments go 
-in the arguments JSON — never inside the function name. When you learn 
-something durable about the repo (stack, structure, key file locations), 
-call update_context_md to save it for future sessions.
-
-OUTPUT
-When asked to explain architecture or request flow, structure your answer 
-as: Summary (1-2 sentences) → Evidence (files/functions, with paths) → 
-Flow or relationships (if applicable). Keep answers grounded in what you 
-actually read, not general framework knowledge.
-"""
-
-EXPLORE_PROMPT = """Give me a full architectural overview of this repository. Explore 
-systematically: identify the stack and entry points, map the major 
-modules and what each owns, and trace how a typical request or 
-execution flows through the codebase from entry point to persistence 
-(if applicable). Note any important patterns, conventions, or things 
-that stand out. Structure your answer as: Overview, Tech Stack, Key 
-Modules, Request/Execution Flow, Notable Observations."""
 
 def validate_workspace_root(path: str) -> Path:
     """Validate and resolve the repository root. Call once at startup."""
@@ -120,7 +69,19 @@ def get_active_provider() -> LLMProvider:
         _provider = get_provider(CLIENT, MODEL)
     return _provider
 
+def set_active_provider(provider_name: str, model_name: str) -> None:
+    """Explicitly set the active provider and model for the session."""
+    global CLIENT, MODEL, _provider
+    CLIENT = provider_name
+    MODEL = model_name
+    _provider = get_provider(provider_name, model_name)
+
+def call_structured_llm( history: list[dict], schema: dict, prompt: str, provider_state: dict | None = None, ) -> dict:
+    """Delegate a structured JSON extraction call to the active provider."""
+    return get_active_provider().call_structured(history, schema, prompt, provider_state)
+
 def run_agent( user_message: str, tools: Tools, conversation_history: list = None, metrics: SessionMetrics = None, provider_state: dict[str, dict[str, Any]] | None = None, ) -> tuple[list[dict[str, Any]], SessionMetrics, dict[str, dict[str, Any]]]:
+    ui = get_ui()
     root = tools.root
 
     if metrics is None:
@@ -134,174 +95,190 @@ def run_agent( user_message: str, tools: Tools, conversation_history: list = Non
     if conversation_history is None:
         initial_context = build_initial_context(root)
         system_content = SYSTEM_PROMPT + "\n\n" + initial_context
-        conversation_history = [{
-            "role": "system",
-            "content": system_content
-        }]
+        conversation_history = [{"role": "system", "content": system_content}]
 
-    conversation_history.append({
-        "role": "user",
-        "content": user_message
-    })
+    conversation_history.append({"role": "user", "content": user_message})
 
     turns = 0
     last_usage = None
+    spinner_text = "Thinking..."
 
-    while turns < MAX_TURNS:
-        if (
-            turns != 0
-            and last_usage is not None
-            and get_prompt_tokens(last_usage) > TOKEN_LIMIT
-        ):
-            print("Compressing Context Window.....")
-            try:
-                conversation_history = compact_context(
-                    conversation_history,
-                    provider_state=provider_state,
-                )
-            except Exception as compact_err:
-                print(f"[Warning] Context compaction failed ({compact_err}); continuing with full history.")
+    with ui.agent_turn() as ui:
+        while turns < MAX_TURNS:
 
-        try:
-            assistant_message, last_usage = get_active_provider().call(
-                conversation_history,
-                TOOLS,
-                provider_state,
-            )
-            assistant_content = assistant_message.get("content", "")
-            print(assistant_content)
+            # ── context compaction ──────────────────────────────────────
+            if turns != 0 and last_usage is not None and get_prompt_tokens(last_usage) > TOKEN_LIMIT:
+                ui.print_compact_context()
+                try:
+                    conversation_history = compact_context(
+                        conversation_history,
+                        provider_state=provider_state,
+                    )
+                    metrics.add_event(
+                        f"Turn {metrics.completed_tasks + 1}: Compacted context window (tokens > {TOKEN_LIMIT})"
+                    )
+                except Exception as compact_err:
+                    ui.print_compaction_error(compact_err)
+
+            # ── LLM call with spinner + 429 retry ──────────────────────
+            llm_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    with ui.thinking(spinner_text):
+                        assistant_message, last_usage = get_active_provider().call(
+                            conversation_history,
+                            TOOLS,
+                            provider_state,
+                        )
+                    llm_error = None
+                    break
+                except Exception as exc:
+                    from ui import _is_rate_limit
+                    if _is_rate_limit(exc) and attempt < 2:
+                        wait = 10.0 * (2 ** attempt)
+                        ui.print_rate_limit_retry(wait, attempt + 1)
+                        time.sleep(wait)
+                        spinner_text = f"Retrying ({attempt + 2}/3)..."
+                        llm_error = exc
+                    else:
+                        llm_error = exc
+                        break
+
+            if llm_error is not None:
+                ui.print_llm_error(llm_error)
+                task_metrics.update_error("llm")
+                break
 
             task_metrics.update_llm(last_usage)
+            ui.update_stats(task_metrics)
 
-        except Exception as e:
-            print(repr(e))
-            task_metrics.update_error("llm")
-            break
+            # ── prose output ────────────────────────────────────────────
+            assistant_content = assistant_message.get("content", "")
+            if assistant_content:
+                ui.print_prose(assistant_content)
 
-        tool_calls = []
+            # ── parse tool calls ────────────────────────────────────────
+            tool_calls = []
+            for tc in assistant_message.get("tool_calls", []):
+                function = tc.get("function", {})
+                tool_calls.append({
+                    "id":        tc.get("id"),
+                    "name":      function.get("name", ""),
+                    "arguments": function.get("arguments", "{}"),
+                })
 
-        for tc in assistant_message.get("tool_calls", []):
-            function = tc.get("function", {})
-            tool_calls.append({
-                "id": tc.get("id"),
-                "name": function.get("name", ""),
-                "arguments": function.get("arguments", "{}"),
-            })
+            conversation_history.append(assistant_message)
 
-        conversation_history.append(assistant_message)
+            # ── no tool calls → ReAct loop ends ─────────────────────────
+            if not tool_calls:
+                break
 
-        # if no tool calls end the ReAct loop
-        if not tool_calls:
-            print("-" * 10 + "x" + "-" * 10)
-            task_metrics.finish()
-            task_metrics.display()
-            metrics.merge(task_metrics)
-            return conversation_history, metrics, provider_state
+            # ── execute tool calls ──────────────────────────────────────
+            for tool_call in tool_calls:
+                tool_name = tool_call["name"]
 
-        # if tool calls, execute them one by one
-        for tool_call in tool_calls:
+                # recover from space-leaked args (e.g. "run_bash ls -la")
+                if tool_name not in VALID_TOOL_NAMES:
+                    if " " in tool_name and tool_name.split(" ", 1)[0] in VALID_TOOL_NAMES:
+                        recovered, leaked = tool_name.split(" ", 1)
+                        tool_name = recovered
+                        tool_call["arguments"] = tool_call["arguments"] or leaked
+                    else:
+                        ui.print_invalid_tool(tool_name)
+                        continue
 
-            tool_name = tool_call["name"]
+                try:
+                    tool_args = json.loads(tool_call["arguments"])
+                except json.JSONDecodeError:
+                    tool_args = {}
 
-            # check if tool all is valid
-            if tool_name not in VALID_TOOL_NAMES:
-                if (" " in tool_name and tool_name.split(" ", 1)[0] in VALID_TOOL_NAMES):
-                    recovered_name, leaked_args = tool_name.split(" ", 1)
-                    tool_name = recovered_name
-                    tool_call["arguments"] = (
-                        tool_call["arguments"] or leaked_args
-                    )
-                else:
-                    print(f"Skipping malformed tool call: {tool_name!r}")
-                    continue
+                ui.print_tool_call(tool_name, tool_call["arguments"])
 
-            try:
-                tool_args = json.loads(tool_call["arguments"])
-            except json.JSONDecodeError:
-                tool_args = {}
+                t0 = time.perf_counter()
+                try:
+                    result = tools.execute_tool(tool_name, tool_args)
+                except Exception as exc:
+                    result = f"Tool execution failed: {exc}"
+                duration = time.perf_counter() - t0
 
-            print(f"\nUsing tool: {tool_name}")
+                success = not result.startswith((
+                    "Error", "Tool execution failed",
+                    "Execution failed", "Command failed", "User Denied Permission",
+                ))
 
-            tool_started_at = time.perf_counter()
+                ui.print_tool_result(tool_name, result)
+                task_metrics.update_tool(tool_name, success=success, duration=duration)
+                ui.update_stats(task_metrics)
 
-            try:
-                result = tools.execute_tool(tool_name, tool_args)
-            except Exception as e:
-                result = f"Tool execution failed: {e}"
+                conversation_history.append({
+                    "role":         "tool",
+                    "tool_call_id": tool_call["id"],
+                    "name":         tool_name,
+                    "content":      result,
+                })
 
-            tool_duration = time.perf_counter() - tool_started_at
+            spinner_text = "Deciding next step..."
+            turns += 1
 
-            success = not result.startswith((
-                "Error",
-                "Tool execution failed",
-                "Execution failed",
-                "Command failed",
-                "User Denied Permission",
-            ))
-
-            task_metrics.update_tool(
-                tool_name,
-                success=success,
-                duration=tool_duration,
-            )
-
-            conversation_history.append({
-                "role": "tool",
-                "tool_call_id": tool_call["id"],
-                "name": tool_name,
-                "content": result,
-            })
-
-        turns += 1
+        else:
+            # while condition exhausted — MAX_TURNS reached
+            ui.print_max_turns(MAX_TURNS)
 
     task_metrics.finish()
-    task_metrics.display()
-    metrics.merge(task_metrics)
-
+    metrics.merge(task_metrics, prompt=user_message)
+    ui.print_task_footer(task_metrics)
     return conversation_history, metrics, provider_state
 
-def main(root : Path):
+def main(root: Path):
     """Main chat loop."""
-    print("=" * 60)
-    print("RoCode Phase 1: Minimum Viable Coding Agent")
-    print("=" * 60)
-    print("Commands: 'quit' to exit, 'clear' to reset conversation")
-    print("=" * 60)
-    print()
+    ui = get_ui()
+    ui.startup_banner()
     tools = Tools(root)
     metrics = SessionMetrics()
 
     initial_context = build_initial_context(root)
+    stack_str = detect_stack(root)
+
+    # ── interactive model selection ─────────────────────────────────────────
+    chosen_client, chosen_model = ui.select_model()
+    set_active_provider(chosen_client, chosen_model)
 
     system_content = SYSTEM_PROMPT + "\n\n" + initial_context
     conversation_history = [{"role": "system", "content": system_content}]
     provider_state = {}
-    print(f"Loaded repository: {root}")
-    print("Ask a question, or type 'explore' for a full architecture overview.\n")
+
+    # ── startup banner ────────────────────────────────────────────────────
+    ui.print_banner(root.name, stack_str, root, model_name=MODEL)
 
     while True:
         try:
-            user_input = input("You: ").strip()
+            user_input = ui.prompt()
         except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye!")
+            ui.console.print("\n[dim]Goodbye![/]")
             break
 
         if not user_input:
             continue
 
-        if user_input.lower() == 'quit':
-            print("Goodbye!")
+        if user_input.lower() in ("quit", "exit"):
+            ui.console.print("[dim]Goodbye![/]")
             break
 
-        if user_input.lower() == 'clear':
-            conversation_history = None  # triggers system msg + initial context rebuild in run_agent
-            provider_state = {}
-            print("Conversation cleared.\n")
+        if user_input.lower() in ("stats", "tokens"):
+            ui.print_detailed_stats(metrics, MODEL)
             continue
-        if user_input.lower() == 'explore':
+
+        if user_input.lower() == "clear":
+            conversation_history = None
+            provider_state = {}
+            ui.console.print("[dim]  Conversation cleared.[/]\n")
+            continue
+
+        is_explore = user_input.lower() == "explore"
+        if is_explore:
             user_input = EXPLORE_PROMPT
 
-        print("\nAgent: ", end="", flush=True)
+        t_start = time.perf_counter()
         conversation_history, metrics, provider_state = run_agent(
             user_input,
             tools,
@@ -309,8 +286,42 @@ def main(root : Path):
             metrics,
             provider_state,
         )
-        print()
-    metrics.display_metrics_total()
+
+        if is_explore:
+            elapsed = time.perf_counter() - t_start
+            try:
+                stats = {
+                    "model":             MODEL,
+                    "tool_calls":        metrics.tool_calls,
+                    "total_tokens":      metrics.total_tokens,
+                    "prompt_tokens":     metrics.prompt_tokens,
+                    "completion_tokens": metrics.completion_tokens,
+                    "task_time":         elapsed,
+                }
+                md_path, html_path = generate_architecture_report(
+                    conversation_history=conversation_history,
+                    repo_root=root,
+                    repo_name=root.name,
+                    stats=stats,
+                    call_fn=call_structured_llm,
+                    schema=ARCHITECTURE_SCHEMA,
+                    extraction_prompt=EXTRACTION_PROMPT,
+                    provider_state=provider_state,
+                )
+                ui.print_explore_summary(
+                    md_path=md_path,
+                    html_path=html_path,
+                    task_calls=metrics.tool_calls,
+                    total_tokens=metrics.total_tokens,
+                    elapsed=elapsed,
+                )
+            except Exception as e:
+                ui.print_explore_error(e)
+
+        ui.console.print()
+
+    ui.print_session_summary(metrics, MODEL)
+
 
 if __name__ == "__main__":
     repo_arg = sys.argv[1] if len(sys.argv) > 1 else "."
