@@ -1,4 +1,4 @@
-# RoCode ⚡
+# RoCode 
 
 > An intelligent, search-first AI coding agent that explores unfamiliar codebases, manages its own context budget, and generates interactive architecture reports with dependency diagrams.
 
