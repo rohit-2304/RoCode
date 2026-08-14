@@ -442,6 +442,7 @@ class RoCodeUI:
         self,
         md_path: Path,
         html_path: Path,
+        agents_path: Path,
         task_calls: int,
         total_tokens: int,
         elapsed: float,
@@ -455,6 +456,7 @@ class RoCodeUI:
         tbl.add_row("Elapsed",     f"{elapsed:.1f}s")
         tbl.add_row("Markdown",    f"[bold]{md_path}[/]")
         tbl.add_row("HTML",        f"[bold]{html_path}[/]")
+        tbl.add_row("AGENTS.md",   f"[bold]{agents_path}[/]")
 
         self.console.print()
         self.console.print(Panel(

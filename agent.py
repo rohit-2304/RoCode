@@ -11,7 +11,7 @@ from tools import TOOLS, Tools, resolve_workspace_path
 from context_mgm import compact_context, prune_old_tool_outputs, build_initial_context, detect_stack
 from telemetry import SessionMetrics, TaskMetrics
 from prompts import SYSTEM_PROMPT, EXPLORE_PROMPT, EXTRACTION_PROMPT, ARCHITECTURE_SCHEMA
-from report import generate_architecture_report
+from report import generate_architecture_report, generate_agents_md
 from ui import RoCodeUI
 
 load_dotenv()
@@ -298,7 +298,7 @@ def main(root: Path):
                     "completion_tokens": metrics.completion_tokens,
                     "task_time":         elapsed,
                 }
-                md_path, html_path = generate_architecture_report(
+                md_path, html_path, arch_data = generate_architecture_report(
                     conversation_history=conversation_history,
                     repo_root=root,
                     repo_name=root.name,
@@ -308,9 +308,15 @@ def main(root: Path):
                     extraction_prompt=EXTRACTION_PROMPT,
                     provider_state=provider_state,
                 )
+                agents_path = generate_agents_md(
+                    data=arch_data,
+                    repo_root=root,
+                    repo_name=root.name,
+                )
                 ui.print_explore_summary(
                     md_path=md_path,
                     html_path=html_path,
+                    agents_path=agents_path,
                     task_calls=metrics.tool_calls,
                     total_tokens=metrics.total_tokens,
                     elapsed=elapsed,
