@@ -1,18 +1,34 @@
+<!-- 
+  PLACEHOLDER: docs/assets/cli_screenshot.png
+  Recommended Screenshot: "Streaming Prose"
+  Capture a shot showing Markdown rendering while streaming (with bold/code blocks), representing a standard user interaction.
+-->
+![RoCode Terminal Screenshot](docs/assets/cli_screenshot.png)
 # RoCode 
 
 > An intelligent, search-first AI coding agent that explores unfamiliar codebases, manages its own context budget, and generates interactive architecture reports with dependency diagrams.
 
 ---
-![RoCode Terminal Screenshot](docs/assets/cli_screenshot.png)
+
 
 ## 🎬 Demo
 
+<!-- 
+  PLACEHOLDER: docs/assets/rocode_demo.gif
+  Recommended Screenshot: "Demo GIF"
+  Capture a looping GIF showing RoCode exploring a repository, executing search tools, and streaming the output.
+-->
 ![RoCode Terminal Demo](docs/assets/rocode_demo.gif)
 *Watch RoCode explore a repository, execute search-first tools, and stream structured architecture reports in real time.*
 
-| Interactive Architecture Report | Dependency Diagram |
+<!-- 
+  PLACEHOLDER: docs/assets/report_preview.png and docs/assets/mermaid_graph.png
+  Recommended Screenshot: "Architecture Report"
+  Capture a view of the generated `architecture_report.html` (the payoff) and a zoomed-in shot of the Mermaid dependency graph.
+-->
+| Interactive Architecture Report | Dependency Graph |
 | :---: | :---: |
-| ![Architecture Report HTML](docs/assets/report_preview.png) | ![Mermaid Dependency Graph](docs/assets/mermaid_graph.png) |
+| ![Architecture Report HTML](docs/assets/report_preview.gif) | ![Mermaid Dependency Graph](docs/assets/mermaid_graph.png) |
 
 ---
 
@@ -34,7 +50,20 @@ Dropping into a multi-thousand-line codebase is overwhelming. Traditional LLM to
 - 📊 **Structured Architecture Reports**: Generates comprehensive `.rocode/ARCHITECTURE.md` and standalone dark-themed `.rocode/architecture_report.html` files complete with Mermaid `graph TD` module maps and sequence flow diagrams.
 - 🛡️ **4-Stage Context Budget Management**: Automatically handles output truncation, token monitoring, old tool payload pruning, and LLM-powered context compaction.
 - 🎨 **Rich Terminal Presentation**: Features interactive model selection, real-time word-by-word streaming markdown, colored tool action lines, and rate-limit retry protection (429 handling).
+  <!-- 
+    PLACEHOLDER: docs/assets/startup_menu.png
+    Recommended Screenshot: "Startup Menu"
+    Capture the model selection table at startup (`ui.select_model`).
+  -->
+  <br>![Startup Menu](docs/assets/startup_menu.png)
+
 - 📈 **3-Tier Diagnostics**: Displays inline per-task footers, session milestone panels, and an on-demand `stats` diagnostic table.
+  <!-- 
+    PLACEHOLDER: docs/assets/diagnostic_stats.png and docs/assets/task_footer.png
+    Recommended Screenshots: "Detailed Stats" and "Task Footer"
+    Capture the terminal showing the diagnostic table (`stats` command output) and a zoomed-in shot of the brief dimmed footer line at the end of a turn.
+  -->
+  <br>![Diagnostic Stats](docs/assets/diagnostic_stats.png)
 
 ---
 
